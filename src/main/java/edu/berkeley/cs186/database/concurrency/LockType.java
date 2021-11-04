@@ -22,8 +22,26 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
-
-        return false;
+        if (a.equals(LockType.NL) || b.equals(LockType.NL)) {
+            return true;
+        }
+        if (a.equals(LockType.IS)) {
+            return !b.equals(LockType.X);
+        }
+        if (a.equals(LockType.IX)) {
+            return b.equals(LockType.IS) || b.equals(LockType.IX);
+        }
+        if (a.equals(LockType.S)) {
+            return b.equals(LockType.IS) || b.equals(LockType.S);
+        }
+        if (a.equals(LockType.SIX)) {
+            return b.equals(LockType.IS);
+        }
+        if (a.equals(LockType.X)) {
+            return false;
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -54,7 +72,24 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
-
+        if (parentLockType.equals(NL)) {
+            return childLockType.equals(NL);
+        }
+        if (childLockType.equals(NL)) {
+            return true;
+        }
+        if (parentLockType.equals(IS)) {
+            return childLockType.equals(IS) || childLockType.equals(S) || childLockType.equals(NL);
+        }
+        if (parentLockType.equals(IX)) {
+            return true;
+        }
+        if (parentLockType.equals(S) || parentLockType.equals(X)) {
+            return false;
+        }
+        if (parentLockType.equals(SIX)) {
+            return childLockType.equals(X) || childLockType.equals(IX);
+        }
         return false;
     }
 
@@ -69,7 +104,24 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
-
+        if (required.equals(NL)) {
+            return true;
+        }
+        if (required.equals(IS)) {
+            return substitute.equals(IS) || substitute.equals(IX);
+        }
+        if (required.equals(IX)) {
+            return substitute.equals(IX);
+        }
+        if (required.equals(S)) {
+            return substitute.equals(S) || substitute.equals(SIX) || substitute.equals(X);
+        }
+        if (required.equals(X)) {
+            return substitute.equals(X);
+        }
+        if (required.equals(SIX)) {
+            return substitute.equals(SIX);
+        }
         return false;
     }
 
