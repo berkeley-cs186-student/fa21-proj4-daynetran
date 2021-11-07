@@ -96,8 +96,31 @@ public class LockContext {
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
+        // ERROR CHECK: throw InvalidLockException if the request is invalid
+        if (parent != null) {
+            if (!LockType.canBeParentLock(parent.getExplicitLockType(transaction), lockType)) {
+                throw new InvalidLockException("The request is invalid");
+            }
+        }
 
-        return;
+        // ERROR CHECK: throw DuplicateLockRequestException if a lock is already held by the transaction
+        if (this.getExplicitLockType(transaction) != LockType.NL) {
+            throw new DuplicateLockRequestException("A lock is already held by the transaction");
+        }
+
+        // ERROR CHECK: throw DuplicateLockRequestException if a lock is already held by the transaction
+        if (readonly) {
+            throw new UnsupportedOperationException("The context is read-only");
+        }
+
+        // continue, acquire and update numChildLocks
+        lockman.acquire(transaction, name, lockType);
+
+        if (numChildLocks.containsKey(transaction.getTransNum())) {
+            numChildLocks.put(transaction.getTransNum(), numChildLocks.get(transaction.getTransNum()) + 1);
+        } else {
+            numChildLocks.put(transaction.getTransNum(), 1);
+        }
     }
 
     /**
@@ -114,7 +137,21 @@ public class LockContext {
     public void release(TransactionContext transaction)
             throws NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // ERROR CHECK: throw NoLockHeldException if no lock on 'name' is held by 'transaction'
+        if (getEffectiveLockType(transaction) == LockType.NL) {
+            throw new NoLockHeldException("No lock on 'name' is held by 'transaction'");
+        }
 
+        // ERROR CHECK: throw InvalidLockException if the lock cannot be released because doing so would violate multigranularity locking constraints
+        if (numChildLocks.get(transaction.getTransNum()) > 0) {
+            throw new InvalidLockException("Lock cannot be released because doing so woud violate multigranularity locking constraints");
+        }
+
+        lockman.release(transaction, name); // release transaction's lock on name
+        if (parent.numChildLocks.containsKey(transaction.getTransNum())) {
+            parent.numChildLocks.put(transaction.getTransNum(), parent.numChildLocks.get(transaction.getTransNum()) - 1); // necessary update to numChildLocks
+        }
+        
         return;
     }
 
@@ -140,8 +177,40 @@ public class LockContext {
     public void promote(TransactionContext transaction, LockType newLockType)
             throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        LockType currentLockType = getExplicitLockType(transaction);
 
-        return;
+        // ERROR CHECK: throws DuplicateLockRequestException if `transaction` already has a 'newLockType` lock
+        if (newLockType == currentLockType) {
+            throw new DuplicateLockRequestException("Transaction already has a newLockType lock");
+        }
+        
+        // ERROR CHECK: throws NoLockHeldException if `transaction` has no lock
+        if (currentLockType == LockType.NL) {
+            throw new NoLockHeldException("transaction has no lock");
+        }
+
+        // ERROR CHECK: throws InvalidLockException if the requested lock type is not a promotion or promoting would cause the lock manager to enter an invalid state
+        boolean isValid = false;
+        if (LockType.substitutable(newLockType, currentLockType) && (currentLockType != newLockType)) {
+            isValid = true;
+        } else if (newLockType == LockType.SIX && currentLockType == LockType.IS) {
+            isValid = true;
+        } else if (hasSIXAncestor(transaction)) {
+            isValid = true;
+        }
+        else {
+            isValid = false;
+        }
+        // If valid, then proceed; else, throw the invalid lock exception
+        if (!isValid) {
+            throw new InvalidLockException("the requested lock type is not a promotion or promoting would cause the lock manager to enter an invalid state");
+        }
+        
+        List<ResourceName> sisDesc = sisDescendants(transaction);
+        for (ResourceName sisDescName : sisDesc) {
+            lockman.release(transaction, sisDescName);
+        }
+        lockman.promote(transaction, name, newLockType);
     }
 
     /**
@@ -190,7 +259,14 @@ public class LockContext {
     public LockType getExplicitLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
-        return LockType.NL;
+        LockType explicitLockType = LockType.NL;
+        List<Lock> resourceLocks = lockman.getLocks(name);
+        for (Lock resourceLock : resourceLocks) {
+            if (resourceLock.transactionNum == transaction.getTransNum()) {
+                explicitLockType = resourceLock.lockType;
+            }
+        }
+        return explicitLockType;
     }
 
     /**
@@ -202,8 +278,28 @@ public class LockContext {
     public LockType getEffectiveLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
+
+        // retrieve explicit lock, if exists, return explicit
+        LockType explicitLockType = getExplicitLockType(transaction);
+        if (explicitLockType != LockType.NL) {
+            return explicitLockType;
+        }
+
+        // if implicit lock exists, retrieve implicit lock
+        LockType implicitLockType = LockType.NL;
+        if (parent != null) {
+            implicitLockType = parent.getEffectiveLockType(transaction);
+            if (implicitLockType == LockType.S) {
+                return LockType.S;
+            } else if (implicitLockType == LockType.X) {
+                return LockType.X;
+            } else {
+                return LockType.NL;
+            }
+        }
         return LockType.NL;
     }
+    
 
     /**
      * Helper method to see if the transaction holds a SIX lock at an ancestor
@@ -213,6 +309,14 @@ public class LockContext {
      */
     private boolean hasSIXAncestor(TransactionContext transaction) {
         // TODO(proj4_part2): implement
+        if (parent != null) {
+            LockType parentLT = parent.getExplicitLockType(transaction);
+            if (parentLT == LockType.SIX) {
+                return true;
+            } else {
+                parent.hasSIXAncestor(transaction);
+            }
+        }
         return false;
     }
 
@@ -225,7 +329,15 @@ public class LockContext {
      */
     private List<ResourceName> sisDescendants(TransactionContext transaction) {
         // TODO(proj4_part2): implement
-        return new ArrayList<>();
+        List<ResourceName> sisDesc = new ArrayList<>();
+        ResourceName currentRN = getResourceName();
+        List<Lock> transactLocks = lockman.getLocks(transaction);
+        for (Lock lock : transactLocks) {
+            if (lock.name.isDescendantOf(currentRN) && (lock.lockType == LockType.S || lock.lockType == LockType.IS)) {
+                sisDesc.add(lock.name);
+            }
+        }
+        return sisDesc;
     }
 
     /**

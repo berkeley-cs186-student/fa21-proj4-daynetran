@@ -359,13 +359,24 @@ public class LockManager {
             throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
         // TODO(proj4_part1): implement
         // You may modify any part of this method.
+        List<Locks> resourceLcoks = getLocks(name);
+        
+
         boolean shouldBlock = false;
         synchronized (this) {
-            
+            for (Lock otherLock : getLocks(name)) {
+                if (!LockType.compatible(newLockType, otherLock.lockType)) {
+                    getResourceEntry(otherLock.name).addToQueue(new LockRequest(transaction, new Lock(name, newLockType, transaction.getTransNum())), true);
+                    shouldBlock = true;
+                    transaction.prepareBlock();
+                }
+            }
         }
         if (shouldBlock) {
             transaction.block();
         }  
+        // Once unblocked, promote the lock
+        
     }
 
     /**
