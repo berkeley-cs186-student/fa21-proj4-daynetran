@@ -111,7 +111,7 @@ public enum LockType {
             return substitute.equals(IS) || substitute.equals(IX);
         }
         if (required.equals(IX)) {
-            return substitute.equals(IX);
+            return substitute.equals(IX) || substitute.equals(SIX);
         }
         if (required.equals(S)) {
             return substitute.equals(S) || substitute.equals(SIX) || substitute.equals(X);

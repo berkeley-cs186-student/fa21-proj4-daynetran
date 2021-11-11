@@ -133,8 +133,7 @@ public class TestLockUtil {
          * When we request S on table1, we should release the IS lock on table1
          * and acquire an S lock in its place using acquire-and-release.
          */
-        LockUtil.ensureSufficientLockHeld(tableContext, LockType.S);
-        assertEquals(Collections.singletonList(
+\        assertEquals(Collections.singletonList(
                 "acquire-and-release 0 database/table1 S [database/table1]"
         ), lockManager.log);
     }

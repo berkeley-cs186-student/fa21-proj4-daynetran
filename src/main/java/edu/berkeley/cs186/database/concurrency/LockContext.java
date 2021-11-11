@@ -96,7 +96,12 @@ public class LockContext {
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
         // TODO(proj4_part2): implement
-        // ERROR CHECK: throw InvalidLockException if the request is invalid
+        // ERROR CHECK: throw UnSupportedOperationException if context is readonly
+        if (readonly) {
+            throw new UnsupportedOperationException("The context is read-only");
+        }
+
+        // ERROR CHECK: throw InvalidLockException if the request is invalid        
         if (parent != null) {
             if (!LockType.canBeParentLock(parent.getExplicitLockType(transaction), lockType)) {
                 throw new InvalidLockException("The request is invalid");
@@ -108,19 +113,18 @@ public class LockContext {
             throw new DuplicateLockRequestException("A lock is already held by the transaction");
         }
 
-        // ERROR CHECK: throw DuplicateLockRequestException if a lock is already held by the transaction
-        if (readonly) {
-            throw new UnsupportedOperationException("The context is read-only");
-        }
+
 
         // continue, acquire and update numChildLocks
         lockman.acquire(transaction, name, lockType);
-
-        if (numChildLocks.containsKey(transaction.getTransNum())) {
-            numChildLocks.put(transaction.getTransNum(), numChildLocks.get(transaction.getTransNum()) + 1);
-        } else {
-            numChildLocks.put(transaction.getTransNum(), 1);
+        if (parent != null) {
+            if (parent.numChildLocks.containsKey(transaction.getTransNum())) {
+                parent.numChildLocks.put(transaction.getTransNum(), parent.numChildLocks.get(transaction.getTransNum()) + 1);
+            } else {
+                parent.numChildLocks.put(transaction.getTransNum(), 1);
+            }
         }
+
     }
 
     /**
@@ -137,21 +141,30 @@ public class LockContext {
     public void release(TransactionContext transaction)
             throws NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        // ERROR CHECK: throw UnSupportedOperationException if context is readonly
+        if (readonly) {
+            throw new UnsupportedOperationException("The context is read-only");
+        }
+
         // ERROR CHECK: throw NoLockHeldException if no lock on 'name' is held by 'transaction'
         if (getEffectiveLockType(transaction) == LockType.NL) {
             throw new NoLockHeldException("No lock on 'name' is held by 'transaction'");
         }
 
         // ERROR CHECK: throw InvalidLockException if the lock cannot be released because doing so would violate multigranularity locking constraints
-        if (numChildLocks.get(transaction.getTransNum()) > 0) {
-            throw new InvalidLockException("Lock cannot be released because doing so woud violate multigranularity locking constraints");
+        if (numChildLocks.containsKey(transaction.getTransNum())) {
+            if (numChildLocks.get(transaction.getTransNum()) != 0) {
+                throw new InvalidLockException("Lock cannot be released because doing so would violate multigranularity locking constraints");
+            }
         }
 
         lockman.release(transaction, name); // release transaction's lock on name
-        if (parent.numChildLocks.containsKey(transaction.getTransNum())) {
-            parent.numChildLocks.put(transaction.getTransNum(), parent.numChildLocks.get(transaction.getTransNum()) - 1); // necessary update to numChildLocks
+        if (parent != null) {
+            if (parent.numChildLocks.containsKey(transaction.getTransNum())) {
+                parent.numChildLocks.put(transaction.getTransNum(), parent.numChildLocks.get(transaction.getTransNum()) - 1); // necessary update to numChildLocks
+            }
         }
-        
+
         return;
     }
 
@@ -178,7 +191,10 @@ public class LockContext {
             throws DuplicateLockRequestException, NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
         LockType currentLockType = getExplicitLockType(transaction);
-
+        // ERROR CHECK: throw UnSupportedOperationException if context is readonlyKKK
+        if (readonly) {
+            throw new UnsupportedOperationException("Context is readonly");
+        }
         // ERROR CHECK: throws DuplicateLockRequestException if `transaction` already has a 'newLockType` lock
         if (newLockType == currentLockType) {
             throw new DuplicateLockRequestException("Transaction already has a newLockType lock");
@@ -201,8 +217,7 @@ public class LockContext {
         else {
             isValid = false;
         }
-        // If valid, then proceed; else, throw the invalid lock exception
-        if (!isValid) {
+        if (!isValid) { // If valid, then proceed; else, throw the invalid lock exception
             throw new InvalidLockException("the requested lock type is not a promotion or promoting would cause the lock manager to enter an invalid state");
         }
         
@@ -248,8 +263,43 @@ public class LockContext {
      */
     public void escalate(TransactionContext transaction) throws NoLockHeldException {
         // TODO(proj4_part2): implement
+        // ERROR CHECK: throw UnSupportedOperationException if context is readonly
+        if (readonly) {
+            throw new UnsupportedOperationException("context is readonly.");
+        }
+        
+        // ERROR CHECK: NoLockHeldException
+        LockType levelLT = getExplicitLockType(transaction);
+        if (levelLT == LockType.NL) {
+            throw new NoLockHeldException("Transaction has no lock at this level.");
+        }
+        
+        // **STEP ONE**: Make a list of resource names whose transaction locks will be released (descendants plus current resource)
+        boolean escalateS = false;
+        boolean escalateX = false;
+        List<ResourceName> releaseNames = new ArrayList<>(); // initialize list of transaction-lock-to-be-released resource names
+        for (Lock lock : lockman.getLocks(transaction)) { // skim through list of locks held by `transaction`
+            if (lock.name.isDescendantOf(getResourceName())) { // identify if the locked resource is a descendant of this resource
+                if (lock.lockType == LockType.S) {
+                    escalateS = true;
+                }
+                if (lock.lockType == LockType.X) {
+                    escalateX = true;
+                }
+                releaseNames.add(lock.name); // if so, add to the list of transaction-lock-to-be-released resource names
+            }
+        }
+        releaseNames.add(name); // add the current resource's name
 
-        return;
+        // **STEP TWO**: Call acquireAndRelease to escalate the transaction's lock at this resource and drop this resource's descendants' transaction locks
+        if (escalateX) {
+            lockman.acquireAndRelease(transaction, name, LockType.X, releaseNames);
+        } else if (escalateS || levelLT == LockType.IS) {
+            lockman.acquireAndRelease(transaction, name, LockType.S, releaseNames);
+        } else if (levelLT == LockType.IX) {
+            lockman.acquireAndRelease(transaction, name, LockType.X, releaseNames);
+        }
+        numChildLocks.put(transaction.getTransNum(), 0);
     }
 
     /**
